@@ -1,15 +1,15 @@
 //! The Client contains information about a single bot or user's token, as well
 //! as event handlers. Dispatching events to configured handlers and starting
 //! the shards' connections are handled directly via the client. In addition,
-//! the `rest` module and `Cache` are also automatically handled by the
+//! the `http` module and `Cache` are also automatically handled by the
 //! Client module for you.
 //!
 //! A [`Context`] is provided for every handler. The context is a method of
 //! accessing the lower-level HTTP functions relevant to the contextual channel.
 //!
-//! The `rest` module is the lower-level method of interacting with the Discord
+//! The `http` module is the lower-level method of interacting with the Discord
 //! REST API. Realistically, there should be little reason to use this yourself,
-//! as the Context will do this for you. A possible use case of using the `rest`
+//! as the Context will do this for you. A possible use case of using the `http`
 //! module is if you do not have a Cache, for purposes such as low memory
 //! requirements.
 //!
@@ -20,9 +20,6 @@
 //! [Client examples]: struct.Client.html#examples
 #![allow(zero_ptr)]
 
-pub mod gateway;
-pub mod rest;
-
 mod context;
 mod dispatch;
 mod error;
@@ -31,66 +28,32 @@ mod event_store;
 pub use self::context::Context;
 pub use self::error::Error as ClientError;
 
+// Note: the following re-exports are here for backwards compatibility
+pub use ::gateway;
+pub use ::http as rest;
+
+#[cfg(feature="cache")]
+pub use ::CACHE;
+
 use self::dispatch::dispatch;
 use self::event_store::EventStore;
-use self::gateway::Shard;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use std::{mem, thread};
+use super::gateway::Shard;
 use typemap::ShareMap;
 use websocket::client::Receiver;
 use websocket::result::WebSocketError;
 use websocket::stream::WebSocketStream;
+use ::http;
 use ::internal::prelude::*;
 use ::internal::ws_impl::ReceiverExt;
 use ::model::event::*;
 use ::model::*;
 
 #[cfg(feature="framework")]
-use ::ext::framework::Framework;
-
-#[cfg(feature="cache")]
-use ::ext::cache::Cache;
-
-#[cfg(feature="cache")]
-lazy_static! {
-    /// A mutable and lazily-initialized static binding. It can be accessed
-    /// across any function and in any context.
-    ///
-    /// This [`Cache`] instance is updated for every event received, so you do
-    /// not need to maintain your own cache.
-    ///
-    /// See the [cache module documentation] for more details.
-    ///
-    /// The Cache itself is wrapped within an `RwLock`, which allows for
-    /// multiple readers or at most one writer at a time across threads. This
-    /// means that you may have multiple commands reading from the Cache
-    /// concurrently.
-    ///
-    /// # Examples
-    ///
-    /// Retrieve the [current user][`CurrentUser`]'s Id, by opening a Read
-    /// guard:
-    ///
-    /// ```rust,ignore
-    /// use serenity::client::CACHE;
-    ///
-    /// println!("{}", CACHE.read().unwrap().user.id);
-    /// ```
-    ///
-    /// By `unwrap()`ing, the thread managing an event dispatch will be blocked
-    /// until the guard can be opened.
-    ///
-    /// If you do not want to block the current thread, you may instead use
-    /// `RwLock::try_read`. Refer to `RwLock`'s documentation in the stdlib for
-    /// more information.
-    ///
-    /// [`CurrentUser`]: ../model/struct.CurrentUser.html
-    /// [`Cache`]: ../ext/cache/struct.Cache.html
-    /// [cache module documentation]: ../ext/cache/index.html
-    pub static ref CACHE: RwLock<Cache> = RwLock::new(Cache::default());
-}
+use ::framework::Framework;
 
 /// The Client is the way to "login" and be able to start sending authenticated
 /// requests over the REST API, as well as initializing a WebSocket connection
@@ -142,9 +105,61 @@ pub struct Client {
     /// In the meaning of a context, this data can be accessed through
     /// [`Context::data`].
     ///
+    /// # Examples
+    ///
+    /// Create a `MessageEventCounter` to track the following events:
+    ///
+    /// - [`Event::MessageCreate`]
+    /// - [`Event::MessageDelete`]
+    /// - [`Event::MessageDeleteBulk`]
+    /// - [`Event::MessageUpdate`]
+    ///
+    /// ```rust,ignore
+    /// extern crate serenity;
+    /// extern crate typemap;
+    ///
+    /// use serenity::Client;
+    /// use std::collections::HashMap;
+    /// use std::env;
+    /// use typemap::Key;
+    ///
+    /// struct MessageEventCounter;
+    ///
+    /// impl Key for MessageEventCounter {
+    ///     type Value = HashMap<String, u64>;
+    /// }
+    ///
+    /// let mut client = Client::login(&env::var("DISCORD_TOKEN").unwrap());
+    ///
+    /// {
+    ///     let mut data = client.data.lock().unwrap();
+    ///     data.insert::<MessageEventCounter>(HashMap::default());
+    /// }
+    ///
+    /// macro_rules! reg {
+    ///     ($ctx:ident $name:expr) => {
+    ///         {
+    ///             let mut data = $ctx.data.lock().unwrap();
+    ///             let counter = data.get_mut::<MessageEventCounter>().unwrap();
+    ///             let entry = counter.entry($name).or_insert(0);
+    ///             *entry += 1;
+    ///         }
+    ///     };
+    /// }
+    ///
+    /// client.on_message(|ctx, _| reg!(ctx "MessageCreate"));
+    /// client.on_message_delete(|ctx, _| reg!(ctx "MessageDelete"));
+    /// client.on_message_delete_bulk(|ctx, _| reg!(ctx "MessageDeleteBulk"));
+    /// client.on_message_update(|ctx, _| reg!(ctx "MessageUpdate"));
+    /// ```
+    ///
     /// Refer to [example 05] for an example on using the `data` field.
     ///
     /// [`Context::data`]: struct.Context.html#method.data
+    /// [`Event::MessageCreate`]: ../model/event/enum.Event.html#variant.MessageCreate
+    /// [`Event::MessageDelete`]: ../model/event/enum.Event.html#variant.MessageDelete
+    /// [`Event::MessageDeleteBulk`]: ../model/event/enum.Event.html#variant.MessageDeleteBulk
+    /// [`Event::MessageUpdate`]: ../model/event/enum.Event.html#variant.MessageUpdate
     /// [example 05]: https://github.com/zeyla/serenity/tree/master/examples/05_command_framework
     pub data: Arc<Mutex<ShareMap>>,
     /// A vector of all active shards that have received their [`Event::Ready`]
@@ -174,6 +189,27 @@ impl Client {
     ///
     /// Discord has a requirement of prefixing bot tokens with `"Bot "`, which
     /// this function will automatically do for you if not already included.
+    ///
+    /// # Examples
+    ///
+    /// Create a Client, using a token from an environment variable:
+    ///
+    /// ```rust,no_run
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::Client;
+    /// use std::env;
+    ///
+    /// let token = env::var("DISCORD_TOKEN")?;
+    /// let client = Client::login(&token);
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #    try_main().unwrap();
+    /// # }
+    /// ```
     pub fn login(bot_token: &str) -> Self {
         let token = if bot_token.starts_with("Bot ") {
             bot_token.to_owned()
@@ -191,8 +227,34 @@ impl Client {
     /// See the [framework module-level documentation][framework docs] for more
     /// information on usage.
     ///
+    /// # Examples
+    ///
+    /// Create a simple framework that responds to a `~ping` command:
+    ///
+    /// ```rust,no_run
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::Client;
+    /// use std::env;
+    ///
+    /// let mut client = Client::login(&env::var("DISCORD_TOKEN")?);
+    /// client.with_framework(|f| f
+    ///     .configure(|c| c.prefix("~"))
+    ///     .command("ping", |c| c.exec_str("Pong!")));
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
+    /// ```
+    ///
+    /// Refer to the documentation for the `framework` module for more in-depth
+    /// information.
+    ///
     /// [`on_message`]: #method.on_message
-    /// [framework docs]: ../ext/framework/index.html
+    /// [framework docs]: ../framework/index.html
     #[cfg(feature="framework")]
     pub fn with_framework<F>(&mut self, f: F)
         where F: FnOnce(Framework) -> Framework + Send + Sync + 'static {
@@ -211,9 +273,33 @@ impl Client {
     /// Refer to the [Gateway documentation][gateway docs] for more information
     /// on effectively using sharding.
     ///
+    /// # Examples
+    ///
+    /// Starting a Client with only 1 shard, out of 1 total:
+    ///
+    /// ```rust,no_run
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::client::Client;
+    /// use std::env;
+    ///
+    /// let mut client = Client::login(&env::var("DISCORD_TOKEN")?);
+    ///
+    /// if let Err(why) = client.start() {
+    ///     println!("Err with client: {:?}", why);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
+    /// ```
+    ///
     /// [gateway docs]: gateway/index.html#sharding
     pub fn start(&mut self) -> Result<()> {
-        self.start_connection(None, rest::get_gateway()?.url)
+        self.start_connection(None, http::get_gateway()?.url)
     }
 
     /// Establish the connection(s) and start listening for events.
@@ -228,9 +314,33 @@ impl Client {
     /// Refer to the [Gateway documentation][gateway docs] for more information
     /// on effectively using sharding.
     ///
+    /// # Examples
+    ///
+    /// Start as many shards as needed using autosharding:
+    ///
+    /// ```rust,no_run
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::Client;
+    /// use std::env;
+    ///
+    /// let mut client = Client::login(&env::var("DISCORD_TOKEN")?);
+    ///
+    /// if let Err(why) = client.start_autosharded() {
+    ///     println!("Err with client: {:?}", why);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
+    /// ```
+    ///
     /// [gateway docs]: gateway/index.html#sharding
     pub fn start_autosharded(&mut self) -> Result<()> {
-        let mut res = rest::get_bot_gateway()?;
+        let mut res = http::get_bot_gateway()?;
 
         let x = res.shards as u64 - 1;
         let y = res.shards as u64;
@@ -253,9 +363,58 @@ impl Client {
     /// Refer to the [Gateway documentation][gateway docs] for more information
     /// on effectively using sharding.
     ///
+    /// # Examples
+    ///
+    /// Start shard 3 of 5:
+    ///
+    /// ```rust,no_run
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::Client;
+    /// use std::env;
+    ///
+    /// let mut client = Client::login(&env::var("DISCORD_TOKEN")?);
+    ///
+    /// if let Err(why) = client.start_shard(3, 5) {
+    ///     println!("Err with client: {:?}", why);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
+    /// ```
+    ///
+    /// Start shard 0 of 1 (you may also be interested in [`start`] or
+    /// [`start_autosharded`]):
+    ///
+    /// ```rust,no_run
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::Client;
+    /// use std::env;
+    ///
+    /// let mut client = Client::login(&env::var("DISCORD_TOKEN")?);
+    ///
+    /// if let Err(why) = client.start_shard(0, 1) {
+    ///     println!("Err with client: {:?}", why);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
+    /// ```
+    ///
+    /// [`start`]: #method.start
+    /// [`start_autosharded`]: #method.start_autosharded
     /// [gateway docs]: gateway/index.html#sharding
     pub fn start_shard(&mut self, shard: u64, shards: u64) -> Result<()> {
-        self.start_connection(Some([shard, shard, shards]), rest::get_gateway()?.url)
+        self.start_connection(Some([shard, shard, shards]), http::get_gateway()?.url)
     }
 
     /// Establish sharded connections and start listening for events.
@@ -270,11 +429,35 @@ impl Client {
     /// Refer to the [Gateway documentation][gateway docs] for more information
     /// on effectively using sharding.
     ///
+    /// # Examples
+    ///
+    /// Start all of 8 shards:
+    ///
+    /// ```rust,no_run
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::Client;
+    /// use std::env;
+    ///
+    /// let mut client = Client::login(&env::var("DISCORD_TOKEN")?);
+    ///
+    /// if let Err(why) = client.start_shards(8) {
+    ///     println!("Err with client: {:?}", why);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
+    /// ```
+    ///
     /// [`start_shard`]: #method.start_shard
-    /// [`start_shard_range`]: #method.start_shards
+    /// [`start_shard_range`]: #method.start_shard_range
     /// [Gateway docs]: gateway/index.html#sharding
     pub fn start_shards(&mut self, total_shards: u64) -> Result<()> {
-        self.start_connection(Some([0, total_shards - 1, total_shards]), rest::get_gateway()?.url)
+        self.start_connection(Some([0, total_shards - 1, total_shards]), http::get_gateway()?.url)
     }
 
     /// Establish a range of sharded connections and start listening for events.
@@ -304,14 +487,54 @@ impl Client {
     /// let _ = client.start_shard_range([4, 7], 10);
     /// ```
     ///
+    /// ```rust,no_run
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// use serenity::Client;
+    /// use std::env;
+    ///
+    /// let mut client = Client::login(&env::var("DISCORD_TOKEN")?);
+    ///
+    /// if let Err(why) = client.start_shard_range([4, 7], 10) {
+    ///     println!("Err with client: {:?}", why);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
+    /// ```
+    ///
     /// [`start_shard`]: #method.start_shard
     /// [`start_shards`]: #method.start_shards
     /// [Gateway docs]: gateway/index.html#sharding
     pub fn start_shard_range(&mut self, range: [u64; 2], total_shards: u64) -> Result<()> {
-        self.start_connection(Some([range[0], range[1], total_shards]), rest::get_gateway()?.url)
+        self.start_connection(Some([range[0], range[1], total_shards]), http::get_gateway()?.url)
     }
 
     /// Attaches a handler for when a [`ChannelCreate`] is received.
+    ///
+    /// # Examples
+    ///
+    /// If the channel is a guild channel, send `"first"` to the channel when
+    /// one is created:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// use serenity::model::Channel;
+    ///
+    /// client.on_channel_create(|ctx, channel| {
+    ///     if let Channel::Guild(ch) = channel {
+    ///         if let Err(why) = ch.read().unwrap().say("first") {
+    ///             println!("Err sending first message: {:?}", why);
+    ///         }
+    ///     }
+    /// });
+    /// ```
     ///
     /// [`ChannelCreate`]: ../model/event/enum.Event.html#variant.ChannelCreate
     pub fn on_channel_create<F>(&mut self, handler: F)
@@ -322,6 +545,34 @@ impl Client {
     }
 
     /// Attaches a handler for when a [`ChannelDelete`] is received.
+    ///
+    /// # Examples
+    ///
+    /// If the channel is a guild channel, send the name of the channel to the
+    /// guild's default channel.
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// use serenity::model::{Channel, ChannelId};
+    ///
+    /// client.on_channel_delete(|ctx, channel| {
+    ///     if let Channel::Guild(channel) = channel {
+    ///         let (content, default_channel_id) = {
+    ///             let reader = channel.read().unwrap();
+    ///             let content = format!("A channel named '{}' was deleted.", reader.name);
+    ///             let id = ChannelId(reader.guild_id.0);
+    ///
+    ///             (content, id)
+    ///         };
+    ///
+    ///         if let Err(why) = default_channel_id.say(&content) {
+    ///             println!("Err sending message to default channel: {:?}", why);
+    ///         }
+    ///     }
+    /// });
+    /// ```
     ///
     /// [`ChannelDelete`]: ../model/event/enum.Event.html#variant.ChannelDelete
     pub fn on_channel_delete<F>(&mut self, handler: F)
@@ -665,7 +916,7 @@ impl Client {
         // This also acts as a form of check to ensure the token is correct.
         #[cfg(feature="framework")]
         {
-            let user = rest::get_current_user()?;
+            let user = http::get_current_user()?;
 
             self.framework.lock()
                 .unwrap()
@@ -778,7 +1029,7 @@ impl Client {
     ///
     /// [`GuildDelete`]: ../model/event/enum.Event.html#variant.GuildDelete
     /// [`Role`]: ../model/struct.Role.html
-    /// [`Cache`]: ../ext/cache/struct.Cache.html
+    /// [`Cache`]: ../cache/struct.Cache.html
     pub fn on_guild_delete<F>(&mut self, handler: F)
         where F: Fn(Context, PartialGuild, Option<Arc<RwLock<Guild>>>) + Send + Sync + 'static {
         self.event_store.write()
@@ -825,7 +1076,7 @@ impl Client {
     /// it did not exist in the [`Cache`] before the update.
     ///
     /// [`GuildRoleUpdate`]: ../model/event/enum.Event.html#variant.GuildRoleUpdate
-    /// [`Cache`]: ../ext/cache/struct.Cache.html
+    /// [`Cache`]: ../cache/struct.Cache.html
     pub fn on_guild_role_update<F>(&mut self, handler: F)
         where F: Fn(Context, GuildId, Option<Role>, Role) + Send + Sync + 'static {
         self.event_store.write()
@@ -872,7 +1123,7 @@ impl Client {
     ///
     /// [`GuildDelete`]: ../model/event/enum.Event.html#variant.GuildDelete
     /// [`Role`]: ../model/struct.Role.html
-    /// [`Cache`]: ../ext/cache/struct.Cache.html
+    /// [`Cache`]: ../cache/struct.Cache.html
     pub fn on_guild_delete<F>(&mut self, handler: F)
         where F: Fn(Context, PartialGuild) + Send + Sync + 'static {
         self.event_store.write()
@@ -916,7 +1167,7 @@ impl Client {
     /// Attaches a handler for when a [`GuildRoleUpdate`] is received.
     ///
     /// [`GuildRoleUpdate`]: ../model/event/enum.Event.html#variant.GuildRoleUpdate
-    /// [`Cache`]: ../ext/cache/struct.Cache.html
+    /// [`Cache`]: ../cache/struct.Cache.html
     pub fn on_guild_role_update<F>(&mut self, handler: F)
         where F: Fn(Context, GuildId, Role) + Send + Sync + 'static {
         self.event_store.write()
@@ -985,7 +1236,7 @@ fn boot_shard(info: &BootInfo) -> Result<(Shard, ReadyEvent, Receiver<WebSocketS
         //
         // If doing so fails, count this as a boot attempt.
         if attempt_number > 3 {
-            match rest::get_gateway() {
+            match http::get_gateway() {
                 Ok(g) => *info.gateway_url.lock().unwrap() = g.url,
                 Err(why) => {
                     warn!("Failed to retrieve gateway URL: {:?}", why);
@@ -1137,7 +1388,7 @@ fn handle_shard(info: &mut MonitorInfo) {
 }
 
 fn login(token: String) -> Client {
-    rest::set_token(&token);
+    http::set_token(&token);
 
     feature_framework! {{
         Client {
@@ -1163,6 +1414,29 @@ fn login(token: String) -> Client {
 /// - Contains 3 parts (split by the period char `'.'`);
 /// - The second part of the token is at least 6 characters long;
 /// - The token does not contain any whitespace prior to or after the token.
+///
+/// # Examples
+///
+/// Validate that a token is valid and that a number of invalid tokens are
+/// actually invalid:
+///
+/// ```rust,no_run
+/// use serenity::client::validate_token;
+///
+/// // ensure a valid token is in fact valid:
+/// assert!(validate_token("Mjg4NzYwMjQxMzYzODc3ODg4.C_ikow.j3VupLBuE1QWZng3TMGH0z_UAwg").is_ok());
+///
+/// // "cat" isn't a valid token:
+/// assert!(validate_token("cat").is_err());
+///
+/// // tokens must have three parts, separated by periods (this is still
+/// // actually an invalid token):
+/// assert!(validate_token("aaa.abcdefgh.bbb").is_ok());
+///
+/// // the second part must be _at least_ 6 characters long:
+/// assert!(validate_token("a.abcdef.b").is_ok());
+/// assert!(validate_token("a.abcde.b").is_err());
+/// ```
 ///
 /// # Errors
 ///

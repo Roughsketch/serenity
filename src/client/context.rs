@@ -1,18 +1,19 @@
 use std::sync::{Arc, Mutex};
-use super::gateway::Shard;
-use super::rest;
 use typemap::ShareMap;
-use ::utils::builder::EditProfile;
+use ::gateway::Shard;
+use ::http;
 use ::internal::prelude::*;
 use ::model::*;
 
 #[cfg(feature="cache")]
 use super::CACHE;
+#[cfg(feature="builder")]
+use ::builder::EditProfile;
 
 /// The context is a general utility struct provided on event dispatches, which
 /// helps with dealing with the current "context" of the event dispatch.
 /// The context also acts as a general high-level interface over the associated
-/// [`Shard`] which received the event, or the low-level [`rest`] module.
+/// [`Shard`] which received the event, or the low-level [`http`] module.
 ///
 /// The context contains "shortcuts", like for interacting with the shard.
 /// Methods like [`set_game`] will unlock the shard and perform an update for
@@ -21,8 +22,8 @@ use super::CACHE;
 /// A context will only live for the event it was dispatched for. After the
 /// event handler finished, it is destroyed and will not be re-used.
 ///
-/// [`Shard`]: gateway/struct.Shard.html
-/// [`rest`]: rest/index.html
+/// [`Shard`]: ../gateway/struct.Shard.html
+/// [`http`]: ../http/index.html
 /// [`set_game`]: #method.set_game
 #[derive(Clone)]
 pub struct Context {
@@ -73,9 +74,18 @@ impl Context {
     ///
     /// Change the current user's username:
     ///
-    /// ```rust,ignore
-    /// context.edit_profile(|p| p.username("Hakase"));
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// #
+    /// # client.on_message(|ctx, msg| {
+    /// #     if msg.content == "!changename" {
+    /// ctx.edit_profile(|p| p.username("Hakase"));
+    /// #     }
+    /// # });
     /// ```
+    #[cfg(feature="builder")]
     pub fn edit_profile<F: FnOnce(EditProfile) -> EditProfile>(&self, f: F) -> Result<CurrentUser> {
         let mut map = Map::new();
 
@@ -88,7 +98,7 @@ impl Context {
                 map.insert("email".to_owned(), Value::String(email.clone()));
             }
         } else {
-            let user = rest::get_current_user()?;
+            let user = http::get_current_user()?;
 
             map.insert("username".to_owned(), Value::String(user.name.clone()));
 
@@ -99,11 +109,26 @@ impl Context {
 
         let edited = f(EditProfile(map)).0;
 
-        rest::edit_profile(&edited)
+        http::edit_profile(&edited)
     }
 
     /// Sets the current user as being [`Online`]. This maintains the current
-    /// game and `afk` setting.
+    /// game.
+    ///
+    /// # Examples
+    ///
+    /// Set the current user to being online on the shard:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// client.on_message(|ctx, msg| {
+    ///     if msg.content == "!online" {
+    ///         ctx.online();
+    ///     }
+    /// });
+    /// ```
     ///
     /// [`Online`]: ../model/enum.OnlineStatus.html#variant.Online
     pub fn online(&self) {
@@ -111,7 +136,22 @@ impl Context {
     }
 
     /// Sets the current user as being [`Idle`]. This maintains the current
-    /// game and `afk` setting.
+    /// game.
+    ///
+    /// # Examples
+    ///
+    /// Set the current user to being idle on the shard:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// client.on_message(|ctx, msg| {
+    ///     if msg.content == "!idle" {
+    ///         ctx.idle();
+    ///     }
+    /// });
+    /// ```
     ///
     /// [`Idle`]: ../model/enum.OnlineStatus.html#variant.Idle
     pub fn idle(&self) {
@@ -119,7 +159,22 @@ impl Context {
     }
 
     /// Sets the current user as being [`DoNotDisturb`]. This maintains the
-    /// current game and `afk` setting.
+    /// current game.
+    ///
+    /// # Examples
+    ///
+    /// Set the current user to being Do Not Disturb on the shard:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// client.on_message(|ctx, msg| {
+    ///     if msg.content == "!dnd" {
+    ///         ctx.dnd();
+    ///     }
+    /// });
+    /// ```
     ///
     /// [`DoNotDisturb`]: ../model/enum.OnlineStatus.html#variant.DoNotDisturb
     pub fn dnd(&self) {
@@ -127,18 +182,47 @@ impl Context {
     }
 
     /// Sets the current user as being [`Invisible`]. This maintains the current
-    /// game and `afk` setting.
+    /// game.
     ///
+    /// # Examples
+    ///
+    /// Set the current user to being invisible on the shard when an
+    /// [`Event::Ready`] is received:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// client.on_ready(|ctx, _| {
+    ///     ctx.invisible();
+    /// });
+    /// ```
+    ///
+    /// [`Event::Ready`]: ../model/event/enum.Event.html#variant.Ready
     /// [`Invisible`]: ../model/enum.OnlineStatus.html#variant.Invisible
     pub fn invisible(&self) {
         self.shard.lock().unwrap().set_status(OnlineStatus::Invisible);
     }
 
-    /// "Resets" the current user's presence, by setting the game to `None`,
-    /// the online status to [`Online`], and `afk` to `false`.
+    /// "Resets" the current user's presence, by setting the game to `None` and
+    /// the online status to [`Online`].
     ///
     /// Use [`set_presence`] for fine-grained control over individual details.
     ///
+    /// # Examples
+    ///
+    /// Reset the presence when an [`Event::Resumed`] is received:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// client.on_resume(|ctx, _| {
+    ///     ctx.reset_presence();
+    /// });
+    /// ```
+    ///
+    /// [`Event::Resumed`]: ../model/event/enum.Event.html#variant.Resumed
     /// [`Online`]: ../model/enum.OnlineStatus.html#variant.Online
     /// [`set_presence`]: #method.set_presence
     pub fn reset_presence(&self) {
@@ -147,19 +231,29 @@ impl Context {
             .set_presence(None, OnlineStatus::Online, false)
     }
 
-    /// Sets the current game, defaulting to an online status of [`Online`], and
-    /// setting `afk` to `false`.
+    /// Sets the current game, defaulting to an online status of [`Online`].
     ///
     /// # Examples
     ///
-    /// Set the current user as playing "Heroes of the Storm":
+    /// Create a command named `~setgame` that accepts a name of a game to be
+    /// playing:
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// #
     /// use serenity::model::Game;
     ///
-    /// // assuming you are in a context
+    /// client.on_message(|ctx, msg| {
+    ///     let args = msg.content.splitn(2, ' ').collect::<Vec<&str>>();
     ///
-    /// context.set_game(Game::playing("Heroes of the Storm"));
+    ///     if args.len() < 2 || *unsafe { args.get_unchecked(0) } != "~setgame" {
+    ///         return;
+    ///     }
+    ///
+    ///     ctx.set_game(Game::playing(*unsafe { args.get_unchecked(1) }));
+    /// });
     /// ```
     ///
     /// [`Online`]: ../model/enum.OnlineStatus.html#variant.Online
@@ -178,6 +272,21 @@ impl Context {
     ///
     /// **Note**: Maximum length is 128.
     ///
+    /// # Examples
+    ///
+    /// When an [`Event::Ready`] is received, set the game name to `"test"`:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// #
+    /// client.on_ready(|ctx, _| {
+    ///     ctx.set_game_name("test");
+    /// });
+    /// ```
+    ///
+    /// [`Event::Ready`]: ../model/event/enum.Event.html#variant.Ready
     /// [`GameType`]: ../model/enum.GameType.html
     /// [`Online`]: ../model/enum.OnlineStatus.html#variant.Online
     /// [`OnlineStatus`]: ../model/enum.OnlineStatus.html
@@ -200,29 +309,38 @@ impl Context {
     ///
     /// # Examples
     ///
-    /// Setting the current user as having no game, being [`Idle`],
-    /// and setting `afk` to `true`:
+    /// Setting the current user as having no game and being [`Idle`]:
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// #
+    /// # client.on_ready(|ctx, _| {
+    /// #
     /// use serenity::model::OnlineStatus;
     ///
-    /// // assuming you are in a context
-    ///
-    /// context.set_game(None, OnlineStatus::Idle, true);
+    /// ctx.set_presence(None, OnlineStatus::Idle, false);
+    /// # });
     /// ```
     ///
-    /// Setting the current user as playing "Heroes of the Storm", being
-    /// [`DoNotDisturb`], and setting `afk` to `false`:
+    /// Setting the current user as playing `"Heroes of the Storm"`, while being
+    /// [`DoNotDisturb`]:
     ///
     /// ```rust,ignore
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// #
+    /// # client.on_ready(|ctx, _| {
+    /// #
     /// use serenity::model::{Game, OnlineStatus};
-    ///
-    /// // assuming you are in a context
     ///
     /// let game = Game::playing("Heroes of the Storm");
     /// let status = OnlineStatus::DoNotDisturb;
     ///
-    /// context.set_game(Some(game), status, false);
+    /// context.set_presence(Some(game), status, false);
+    /// # });
     /// ```
     ///
     /// [`DoNotDisturb`]: ../model/enum.OnlineStatus.html#variant.DoNotDisturb

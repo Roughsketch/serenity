@@ -1,14 +1,17 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::io::Read;
 use std::mem;
-use ::client::rest;
 use ::internal::prelude::*;
 use ::model::*;
-use ::utils::builder::{CreateInvite, CreateMessage, EditChannel, GetMessages};
-use ::utils as serenity_utils;
 
+#[cfg(feature="model")]
+use ::builder::{CreateInvite, CreateMessage, EditChannel, GetMessages};
 #[cfg(feature="cache")]
-use ::client::CACHE;
+use ::CACHE;
+#[cfg(feature="model")]
+use ::http;
+#[cfg(all(feature="model", feature="utils"))]
+use ::utils as serenity_utils;
 
 /// Represents a guild's text or voice channel. Some methods are available only
 /// for voice channels and some are only available for text channels.
@@ -62,6 +65,7 @@ pub struct GuildChannel {
     pub user_limit: Option<u64>,
 }
 
+#[cfg(feature="model")]
 impl GuildChannel {
     /// Broadcasts to the channel that the current user is typing.
     ///
@@ -71,10 +75,10 @@ impl GuildChannel {
     ///
     /// # Errors
     ///
-    /// Returns a [`ClientError::InvalidPermissions`] if the current user does
+    /// Returns a [`ModelError::InvalidPermissions`] if the current user does
     /// not have the required permissions.
     ///
-    /// [`ClientError::InvalidPermissions`]: ../client/enum.ClientError.html#variant.InvalidPermissions
+    /// [`ModelError::InvalidPermissions`]: enum.ModelError.html#variant.InvalidPermissions
     /// [Send Messages]: permissions/constant.SEND_MESSAGES.html
     pub fn broadcast_typing(&self) -> Result<()> {
         self.id.broadcast_typing()
@@ -96,11 +100,11 @@ impl GuildChannel {
             let req = permissions::CREATE_INVITE;
 
             if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Client(ClientError::InvalidPermissions(req)));
+                return Err(Error::Model(ModelError::InvalidPermissions(req)));
             }
         }
 
-        rest::create_invite(self.id.0, &f(CreateInvite::default()).0)
+        http::create_invite(self.id.0, &f(CreateInvite::default()).0)
     }
 
     /// Creates a [permission overwrite][`PermissionOverwrite`] for either a
@@ -118,12 +122,20 @@ impl GuildChannel {
     /// permission, but denying the [Send TTS Messages] and [Attach Files]
     /// permissions:
     ///
-    /// ```rust,ignore
-    /// use serenity::client::CACHE;
-    /// use serenity::model::{ChannelId, PermissionOverwrite, permissions};
-    ///
-    /// let channel_id = 7;
-    /// let user_id = 8;
+    /// ```rust,no_run
+    /// # use serenity::model::{ChannelId, UserId};
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// #     let (channel_id, user_id) = (ChannelId(0), UserId(0));
+    /// #
+    /// use serenity::model::{
+    ///     ModelError,
+    ///     PermissionOverwrite,
+    ///     PermissionOverwriteType,
+    ///     permissions,
+    /// };
+    /// use serenity::CACHE;
     ///
     /// let allow = permissions::SEND_MESSAGES;
     /// let deny = permissions::SEND_TTS_MESSAGES | permissions::ATTACH_FILES;
@@ -134,9 +146,17 @@ impl GuildChannel {
     /// };
     ///
     /// let cache = CACHE.read().unwrap();
-    /// let channel = cache.get_guild_channel(channel_id).unwrap();
+    /// let channel = cache
+    ///     .guild_channel(channel_id)
+    ///     .ok_or(ModelError::ItemMissing)?;
     ///
-    /// let _ = channel.create_permission(overwrite);
+    /// channel.read().unwrap().create_permission(&overwrite)?;
+    /// #     Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
     /// ```
     ///
     /// Creating a permission overwrite for a role by specifying the
@@ -144,12 +164,20 @@ impl GuildChannel {
     /// permission, but denying the [Send TTS Messages] and [Attach Files]
     /// permissions:
     ///
-    /// ```rust,ignore
-    /// use serenity::client::CACHE;
-    /// use serenity::model::{ChannelId, PermissionOverwrite, permissions};
-    ///
-    /// let channel_id = 7;
-    /// let user_id = 8;
+    /// ```rust,no_run
+    /// # use serenity::model::{ChannelId, UserId};
+    /// # use std::error::Error;
+    /// #
+    /// # fn try_main() -> Result<(), Box<Error>> {
+    /// #     let (channel_id, user_id) = (ChannelId(0), UserId(0));
+    /// #
+    /// use serenity::model::{
+    ///     ModelError,
+    ///     PermissionOverwrite,
+    ///     PermissionOverwriteType,
+    ///     permissions,
+    /// };
+    /// use serenity::CACHE;
     ///
     /// let allow = permissions::SEND_MESSAGES;
     /// let deny = permissions::SEND_TTS_MESSAGES | permissions::ATTACH_FILES;
@@ -160,9 +188,17 @@ impl GuildChannel {
     /// };
     ///
     /// let cache = CACHE.read().unwrap();
-    /// let channel = cache.get_guild_channel(channel_id).unwrap();
+    /// let channel = cache
+    ///     .guild_channel(channel_id)
+    ///     .ok_or(ModelError::ItemMissing)?;
     ///
-    /// let _ = channel.create_permission(overwrite);
+    /// channel.read().unwrap().create_permission(&overwrite)?;
+    /// #     Ok(())
+    /// # }
+    /// #
+    /// # fn main() {
+    /// #     try_main().unwrap();
+    /// # }
     /// ```
     ///
     /// [`Channel`]: enum.Channel.html
@@ -174,9 +210,10 @@ impl GuildChannel {
     /// [Attach Files]: permissions/constant.ATTACH_FILES.html
     /// [Manage Channels]: permissions/constant.MANAGE_CHANNELS.html
     /// [Manage Webhooks]: permissions/constant.MANAGE_WEBHOOKS.html
+    /// [Send Messages]: permissions/constant.SEND_MESSAGES.html
     /// [Send TTS Messages]: permissions/constant.SEND_TTS_MESSAGES.html
     #[inline]
-    pub fn create_permission(&self, target: PermissionOverwrite) -> Result<()> {
+    pub fn create_permission(&self, target: &PermissionOverwrite) -> Result<()> {
         self.id.create_permission(target)
     }
 
@@ -187,7 +224,7 @@ impl GuildChannel {
             let req = permissions::MANAGE_CHANNELS;
 
             if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Client(ClientError::InvalidPermissions(req)));
+                return Err(Error::Model(ModelError::InvalidPermissions(req)));
             }
         }
 
@@ -256,7 +293,7 @@ impl GuildChannel {
             let req = permissions::MANAGE_CHANNELS;
 
             if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Client(ClientError::InvalidPermissions(req)));
+                return Err(Error::Model(ModelError::InvalidPermissions(req)));
             }
         }
 
@@ -267,7 +304,7 @@ impl GuildChannel {
 
         let edited = f(EditChannel(map)).0;
 
-        match rest::edit_channel(self.id.0, &edited) {
+        match http::edit_channel(self.id.0, &edited) {
             Ok(channel) => {
                 mem::replace(self, channel);
 
@@ -288,14 +325,14 @@ impl GuildChannel {
     ///
     /// # Errors
     ///
-    /// Returns a [`ClientError::MessageTooLong`] if the content of the message
+    /// Returns a [`ModelError::MessageTooLong`] if the content of the message
     /// is over the [`the limit`], containing the number of unicode code points
     /// over the limit.
     ///
-    /// [`ClientError::MessageTooLong`]: ../client/enum.ClientError.html#variant.MessageTooLong
-    /// [`CreateMessage`]: ../utils/builder/struct.CreateMessage.html
+    /// [`ModelError::MessageTooLong`]: enum.ModelError.html#variant.MessageTooLong
+    /// [`CreateMessage`]: ../builder/struct.CreateMessage.html
     /// [`Message`]: struct.Message.html
-    /// [`the limit`]: ../utils/builder/struct.CreateMessage.html#method.content
+    /// [`the limit`]: ../builder/struct.CreateMessage.html#method.content
     #[inline]
     pub fn edit_message<F, M>(&self, message_id: M, f: F) -> Result<Message>
         where F: FnOnce(CreateMessage) -> CreateMessage, M: Into<MessageId> {
@@ -330,6 +367,7 @@ impl GuildChannel {
     /// [`ChannelType::Text`]: enum.ChannelType.html#variant.Text
     /// [`ChannelType::Voice`]: enum.ChannelType.html#variant.Voice
     /// [`utils::is_nsfw`]: ../utils/fn.is_nsfw.html
+    #[cfg(feature="utils")]
     #[inline]
     pub fn is_nsfw(&self) -> bool {
         self.kind == ChannelType::Text && serenity_utils::is_nsfw(&self.name)
@@ -357,6 +395,94 @@ impl GuildChannel {
     pub fn messages<F>(&self, f: F) -> Result<Vec<Message>>
         where F: FnOnce(GetMessages) -> GetMessages {
         self.id.messages(f)
+    }
+
+    /// Calculates the permissions of a member.
+    ///
+    /// The Id of the argument must be a [`Member`] of the [`Guild`] that the
+    /// channel is in.
+    ///
+    /// # Examples
+    ///
+    /// Calculate the permissions of a [`User`] who posted a [`Message`] in a
+    /// channel:
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// #
+    /// use serenity::CACHE;
+    ///
+    /// client.on_message(|_, msg| {
+    ///     let channel = match CACHE.read().unwrap().get_guild_channel(msg.channel_id) {
+    ///         Some(channel) => channel,
+    ///         None => return,
+    ///     };
+    ///
+    ///     let permissions = channel.read().unwrap().permissions_for(&msg.author).unwrap();
+    ///
+    ///     println!("The user's permissions: {:?}", permissions);
+    /// });
+    /// ```
+    ///
+    /// Check if the current user has the [Attach Files] and [Send Messages]
+    /// permissions (note: serenity will automatically check this for; this is
+    /// for demonstrative purposes):
+    ///
+    /// ```rust,no_run
+    /// # use serenity::Client;
+    /// #
+    /// # let mut client = Client::login("");
+    /// #
+    /// use serenity::CACHE;
+    /// use serenity::model::permissions;
+    /// use std::fs::File;
+    ///
+    /// client.on_message(|_, msg| {
+    ///     let channel = match CACHE.read().unwrap().get_guild_channel(msg.channel_id) {
+    ///         Some(channel) => channel,
+    ///         None => return,
+    ///     };
+    ///
+    ///     let current_user_id = CACHE.read().unwrap().user.id;
+    ///     let permissions = channel.read().unwrap().permissions_for(current_user_id).unwrap();
+    ///
+    ///     if !permissions.contains(permissions::ATTACH_FILES | permissions::SEND_MESSAGES) {
+    ///         return;
+    ///     }
+    ///
+    ///     let file = match File::open("./cat.png") {
+    ///         Ok(file) => file,
+    ///         Err(why) => {
+    ///             println!("Err opening file: {:?}", why);
+    ///
+    ///             return;
+    ///         },
+    ///     };
+    ///
+    ///     let _ = msg.channel_id.send_file(file, "cat.png", |m| m.content("here's a cat"));
+    /// });
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ModelError::GuildNotFound`] if the channel's guild could
+    /// not be found in the [`Cache`].
+    ///
+    /// [`Cache`]: ../cache/struct.Cache.html
+    /// [`ModelError::GuildNotFound`]: enum.ModelError.html#variant.GuildNotFound
+    /// [`Guild`]: struct.Guild.html
+    /// [`Member`]: struct.Member.html
+    /// [`Message`]: struct.Message.html
+    /// [`User`]: struct.User.html
+    /// [Attach Files]: permissions/constant.ATTACH_FILES.html
+    /// [Send Messages]: permissions/constant.SEND_MESSAGES.html
+    #[cfg(feature="cache")]
+    pub fn permissions_for<U: Into<UserId>>(&self, user_id: U) -> Result<Permissions> {
+        self.guild()
+            .ok_or_else(|| Error::Model(ModelError::GuildNotFound))
+            .map(|g| g.read().unwrap().permissions_for(self.id, user_id))
     }
 
     /// Pins a [`Message`] to the channel.
@@ -396,12 +522,12 @@ impl GuildChannel {
     ///
     /// # Errors
     ///
-    /// Returns a [`ClientError::MessageTooLong`] if the content of the message
+    /// Returns a [`ModelError::MessageTooLong`] if the content of the message
     /// is over the above limit, containing the number of unicode code points
     /// over the limit.
     ///
-    /// [`ChannelId`]: ../model/struct.ChannelId.html
-    /// [`ClientError::MessageTooLong`]: enum.ClientError.html#variant.MessageTooLong
+    /// [`ChannelId`]: struct.ChannelId.html
+    /// [`ModelError::MessageTooLong`]: enum.ModelError.html#variant.MessageTooLong
     #[inline]
     pub fn say(&self, content: &str) -> Result<Message> {
         self.id.say(content)
@@ -418,12 +544,17 @@ impl GuildChannel {
     ///
     /// # Errors
     ///
+    /// Returns an
+    /// [`HttpError::InvalidRequest(PayloadTooLarge)`][`HttpError::InvalidRequest`]
+    /// if the file is too large to send.
+    ///
     /// If the content of the message is over the above limit, then a
-    /// [`ClientError::MessageTooLong`] will be returned, containing the number
+    /// [`ModelError::MessageTooLong`] will be returned, containing the number
     /// of unicode code points over the limit.
     ///
     /// [`ChannelId::send_file`]: struct.ChannelId.html#method.send_file
-    /// [`ClientError::MessageTooLong`]: ../client/enum.ClientError.html#variant.MessageTooLong
+    /// [`HttpError::InvalidRequest`]: ../http/enum.HttpError.html#variant.InvalidRequest
+    /// [`ModelError::MessageTooLong`]: enum.ModelError.html#variant.MessageTooLong
     /// [Attach Files]: permissions/constant.ATTACH_FILES.html
     /// [Send Messages]: permissions/constant.SEND_MESSAGES.html
     pub fn send_file<F, R>(&self, file: R, filename: &str, f: F) -> Result<Message>
@@ -439,15 +570,15 @@ impl GuildChannel {
     ///
     /// # Errors
     ///
-    /// Returns a [`ClientError::MessageTooLong`] if the content of the message
+    /// Returns a [`ModelError::MessageTooLong`] if the content of the message
     /// is over the above limit, containing the number of unicode code points
     /// over the limit.
     ///
-    /// Returns a [`ClientError::InvalidPermissions`] if the current user does
+    /// Returns a [`ModelError::InvalidPermissions`] if the current user does
     /// not have the required permissions.
     ///
-    /// [`ClientError::InvalidPermissions`]: ../client/enum.ClientError.html#variant.InvalidPermissions
-    /// [`ClientError::MessageTooLong`]: ../client/enum.ClientError.html#variant.MessageTooLong
+    /// [`ModelError::InvalidPermissions`]: enum.ModelError.html#variant.InvalidPermissions
+    /// [`ModelError::MessageTooLong`]: enum.ModelError.html#variant.MessageTooLong
     /// [`Message`]: struct.Message.html
     /// [Send Messages]: permissions/constant.SEND_MESSAGES.html
     pub fn send_message<F: FnOnce(CreateMessage) -> CreateMessage>(&self, f: F) -> Result<Message> {
@@ -456,7 +587,7 @@ impl GuildChannel {
             let req = permissions::SEND_MESSAGES;
 
             if !utils::user_has_perms(self.id, req)? {
-                return Err(Error::Client(ClientError::InvalidPermissions(req)));
+                return Err(Error::Model(ModelError::InvalidPermissions(req)));
             }
         }
 
@@ -483,59 +614,9 @@ impl GuildChannel {
     pub fn webhooks(&self) -> Result<Vec<Webhook>> {
         self.id.webhooks()
     }
-
-    /// Alias of [`invites`].
-    ///
-    /// [`invites`]: #method.invites
-    #[deprecated(since="0.1.5", note="Use `invites` instead.")]
-    #[inline]
-    pub fn get_invites(&self) -> Result<Vec<RichInvite>> {
-        self.invites()
-    }
-
-    /// Alias of [`message`].
-    ///
-    /// [`message`]: #method.message
-    #[deprecated(since="0.1.5", note="Use `message` instead.")]
-    #[inline]
-    pub fn get_message<M: Into<MessageId>>(&self, message_id: M) -> Result<Message> {
-        self.message(message_id)
-    }
-
-    /// Alias of [`messages`].
-    ///
-    /// [`messages`]: #method.messages
-    #[deprecated(since="0.1.5", note="Use `messages` instead.")]
-    #[inline]
-    pub fn get_messages<F>(&self, f: F) -> Result<Vec<Message>>
-        where F: FnOnce(GetMessages) -> GetMessages {
-        self.messages(f)
-    }
-
-    /// Alias of [`reaction_users`].
-    ///
-    /// [`reaction_users`]: #method.reaction_users
-    #[deprecated(since="0.1.5", note="Use `reaction_users` instead.")]
-    #[inline]
-    pub fn get_reaction_users<M, R, U>(&self,
-                                       message_id: M,
-                                       reaction_type: R,
-                                       limit: Option<u8>,
-                                       after: Option<U>)
-        -> Result<Vec<User>> where M: Into<MessageId>, R: Into<ReactionType>, U: Into<UserId> {
-        self.reaction_users(message_id, reaction_type, limit, after)
-    }
-
-    /// Alias of [`webhooks`].
-    ///
-    /// [`webhooks`]: #method.webhooks
-    #[deprecated(since="0.1.5", note="Use `webhooks` instead.")]
-    #[inline]
-    pub fn get_webhooks(&self) -> Result<Vec<Webhook>> {
-        self.webhooks()
-    }
 }
 
+#[cfg(feature="model")]
 impl Display for GuildChannel {
     /// Formats the channel, creating a mention of it.
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
