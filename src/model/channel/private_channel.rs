@@ -2,6 +2,7 @@ use chrono::{DateTime, FixedOffset};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use super::deserialize_single_recipient;
 use model::*;
+use internal::RwLockExt;
 
 #[cfg(feature = "model")]
 use builder::{CreateMessage, GetMessages};
@@ -169,7 +170,7 @@ impl PrivateChannel {
     }
 
     /// Returns "DM with $username#discriminator".
-    pub fn name(&self) -> String { format!("DM with {}", self.recipient.read().unwrap().tag()) }
+    pub fn name(&self) -> String { format!("DM with {}", self.recipient.with(|r| r.tag())) }
 
     /// Gets the list of [`User`]s who have reacted to a [`Message`] with a
     /// certain [`Emoji`].

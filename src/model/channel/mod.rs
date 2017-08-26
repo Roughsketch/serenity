@@ -20,6 +20,7 @@ use serde::de::Error as DeError;
 use serde_json;
 use super::utils::deserialize_u64;
 use model::*;
+use internal::RwLockExt;
 
 #[cfg(feature = "model")]
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -158,7 +159,7 @@ impl Channel {
     #[inline]
     pub fn is_nsfw(&self) -> bool {
         match *self {
-            Channel::Guild(ref channel) => channel.read().unwrap().is_nsfw(),
+            Channel::Guild(ref channel) => channel.with(|c| c.is_nsfw()),
             Channel::Group(_) |
             Channel::Private(_) => false,
         }
@@ -236,9 +237,9 @@ impl Channel {
     /// [`PrivateChannel`]: struct.PrivateChannel.html
     pub fn id(&self) -> ChannelId {
         match *self {
-            Channel::Group(ref group) => group.read().unwrap().channel_id,
-            Channel::Guild(ref channel) => channel.read().unwrap().id,
-            Channel::Private(ref channel) => channel.read().unwrap().id,
+            Channel::Group(ref group) => group.with(|g| g.channel_id),
+            Channel::Guild(ref ch) => ch.with(|c| c.id),
+            Channel::Private(ref ch) => ch.with(|c| c.id),
         }
     }
 

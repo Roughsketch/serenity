@@ -300,7 +300,6 @@ impl GuildChannel {
     /// ```
     pub fn edit<F>(&mut self, f: F) -> Result<()>
         where F: FnOnce(EditChannel) -> EditChannel {
-
         #[cfg(feature = "cache")]
         {
             let req = permissions::MANAGE_CHANNELS;

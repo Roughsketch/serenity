@@ -79,22 +79,22 @@ impl Context {
         let mut map = Map::new();
 
         feature_cache! {{
-            let cache = CACHE.read().unwrap();
-
-            map.insert("username".to_owned(), Value::String(cache.user.name.clone()));
-
-            if let Some(email) = cache.user.email.as_ref() {
-                map.insert("email".to_owned(), Value::String(email.clone()));
-            }
-        } else {
-            let user = http::get_current_user()?;
-
-            map.insert("username".to_owned(), Value::String(user.name.clone()));
-
-            if let Some(email) = user.email.as_ref() {
-                map.insert("email".to_owned(), Value::String(email.clone()));
-            }
-        }}
+                            let cache = CACHE.read().unwrap();
+        
+                            map.insert("username".to_owned(), Value::String(cache.user.name.clone()));
+        
+                            if let Some(email) = cache.user.email.as_ref() {
+                                map.insert("email".to_owned(), Value::String(email.clone()));
+                            }
+                        } else {
+                            let user = http::get_current_user()?;
+        
+                            map.insert("username".to_owned(), Value::String(user.name.clone()));
+        
+                            if let Some(email) = user.email.as_ref() {
+                                map.insert("email".to_owned(), Value::String(email.clone()));
+                            }
+                        }}
 
         let edited = f(EditProfile(map)).0;
 

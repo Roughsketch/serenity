@@ -800,8 +800,8 @@ impl Guild {
             Some(everyone) => everyone,
             None => {
                 error!("(╯°□°）╯︵ ┻━┻ @everyone role ({}) missing in '{}'",
-                       self.id,
-                       self.name);
+                self.id,
+                self.name);
 
                 return Permissions::empty();
             },
@@ -820,9 +820,9 @@ impl Guild {
                 permissions |= role.permissions;
             } else {
                 warn!("(╯°□°）╯︵ ┻━┻ {} on {} has non-existent role {:?}",
-                      member.user.read().unwrap().id,
-                      self.id,
-                      role);
+                member.user.read().unwrap().id,
+                self.id,
+                role);
             }
         }
 
@@ -868,8 +868,8 @@ impl Guild {
             }
         } else {
             warn!("(╯°□°）╯︵ ┻━┻ Guild {} does not contain channel {}",
-                  self.id,
-                  channel_id);
+            self.id,
+            channel_id);
         }
 
         // The default channel is always readable.

@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use model::*;
+use internal::RwLockExt;
 
 #[cfg(feature = "model")]
 use std::borrow::Cow;
@@ -512,9 +513,9 @@ impl From<Channel> for ChannelId {
     /// Gets the Id of a `Channel`.
     fn from(channel: Channel) -> ChannelId {
         match channel {
-            Channel::Group(group) => group.read().unwrap().channel_id,
-            Channel::Guild(ch) => ch.read().unwrap().id,
-            Channel::Private(ch) => ch.read().unwrap().id,
+            Channel::Group(group) => group.with(|g| g.channel_id),
+            Channel::Guild(ch) => ch.with(|c| c.id),
+            Channel::Private(ch) => ch.with(|c| c.id),
         }
     }
 }
@@ -523,9 +524,9 @@ impl<'a> From<&'a Channel> for ChannelId {
     /// Gets the Id of a `Channel`.
     fn from(channel: &Channel) -> ChannelId {
         match *channel {
-            Channel::Group(ref group) => group.read().unwrap().channel_id,
-            Channel::Guild(ref ch) => ch.read().unwrap().id,
-            Channel::Private(ref ch) => ch.read().unwrap().id,
+            Channel::Group(ref group) => group.with(|g| g.channel_id),
+            Channel::Guild(ref ch) => ch.with(|c| c.id),
+            Channel::Private(ref ch) => ch.with(|c| c.id),
         }
     }
 }

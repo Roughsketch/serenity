@@ -482,7 +482,7 @@ impl Cache {
     pub fn member<G, U>(&self, guild_id: G, user_id: U) -> Option<Member>
         where G: Into<GuildId>, U: Into<UserId> {
         self.guilds.get(&guild_id.into()).and_then(|guild| {
-            guild.write().unwrap().members.get(&user_id.into()).cloned()
+            guild.read().unwrap().members.get(&user_id.into()).cloned()
         })
     }
 

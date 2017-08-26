@@ -139,40 +139,40 @@ impl Shard {
 
         let mut shard =
             feature_voice! {{
-            let (tx, rx) = mpsc::channel();
-
-            let user = http::get_current_user()?;
-
-            Shard {
-                client,
-                current_presence,
-                heartbeat_instants,
-                heartbeat_interval,
-                last_heartbeat_acknowledged,
-                seq,
-                stage,
-                token,
-                session_id,
-                shard_info,
-                ws_url,
-                manager: VoiceManager::new(tx, user.id),
-                manager_rx: rx,
-            }
-        } else {
-            Shard {
-                client,
-                current_presence,
-                heartbeat_instants,
-                heartbeat_interval,
-                last_heartbeat_acknowledged,
-                seq,
-                stage,
-                token,
-                session_id,
-                shard_info,
-                ws_url,
-            }
-        }};
+                                            let (tx, rx) = mpsc::channel();
+        
+                                            let user = http::get_current_user()?;
+        
+                                            Shard {
+                                                client,
+                                                current_presence,
+                                                heartbeat_instants,
+                                                heartbeat_interval,
+                                                last_heartbeat_acknowledged,
+                                                seq,
+                                                stage,
+                                                token,
+                                                session_id,
+                                                shard_info,
+                                                ws_url,
+                                                manager: VoiceManager::new(tx, user.id),
+                                                manager_rx: rx,
+                                            }
+                                        } else {
+                                            Shard {
+                                                client,
+                                                current_presence,
+                                                heartbeat_instants,
+                                                heartbeat_interval,
+                                                last_heartbeat_acknowledged,
+                                                seq,
+                                                stage,
+                                                token,
+                                                session_id,
+                                                shard_info,
+                                                ws_url,
+                                            }
+                                        }};
 
         shard.identify()?;
 
@@ -416,7 +416,7 @@ impl Shard {
             },
             Ok(GatewayEvent::InvalidateSession) => {
                 info!("[Shard {:?}] Received session invalidation; re-identifying",
-                      self.shard_info);
+                self.shard_info);
 
                 self.seq = 0;
                 self.session_id = None;
@@ -435,10 +435,10 @@ impl Shard {
                     let kind = if clean { "Cleanly" } else { "Uncleanly" };
 
                     info!("[Shard {:?}] {} closing with {:?}: {:?}",
-                          self.shard_info,
-                          kind,
-                          num,
-                          reason);
+                    self.shard_info,
+                    kind,
+                    num,
+                    reason);
                 }
 
                 match num {
@@ -479,9 +479,9 @@ impl Shard {
                     },
                     Some(other) if !clean => {
                         warn!("[Shard {:?}] Unknown unclean close {}: {:?}",
-                              self.shard_info,
-                              other,
-                              reason);
+                        self.shard_info,
+                        other,
+                        reason);
                     },
                     _ => {},
                 }
@@ -780,8 +780,8 @@ impl Shard {
 
             return self.reconnect().map_err(|why| {
                 warn!("[Shard {:?}] Err auto-reconnecting from heartbeat check: {:?}",
-                      self.shard_info,
-                      why);
+                self.shard_info,
+                why);
 
                 why
             });
@@ -909,6 +909,8 @@ impl Shard {
                 "status": status.name(),
                 "game": game.as_ref().map(|x| json!({
                     "name": x.name,
+                    "type": x.kind,
+                    "url": x.url,
                 })),
             },
         });

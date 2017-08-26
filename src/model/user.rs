@@ -492,36 +492,35 @@ impl User {
             return Err(Error::Model(ModelError::MessagingBot));
         }
 
-        let private_channel_id =
-            feature_cache! {{
-            let finding = {
-                let cache = CACHE.read().unwrap();
-
-                let finding = cache.private_channels
-                    .values()
-                    .map(|ch| ch.read().unwrap())
-                    .find(|ch| ch.recipient.read().unwrap().id == self.id)
-                    .map(|ch| ch.id);
-
-                finding
-            };
-
-            if let Some(finding) = finding {
-                finding
-            } else {
-                let map = json!({
-                    "recipient_id": self.id.0,
-                });
-
-                http::create_private_channel(&map)?.id
-            }
-        } else {
-            let map = json!({
-                "recipient_id": self.id.0,
-            });
-
-            http::create_private_channel(&map)?.id
-        }};
+        let private_channel_id = feature_cache! {{
+                                            let finding = {
+                                                let cache = CACHE.read().unwrap();
+        
+                                                let finding = cache.private_channels
+                                                    .values()
+                                                    .map(|ch| ch.read().unwrap())
+                                                    .find(|ch| ch.recipient.read().unwrap().id == self.id)
+                                                    .map(|ch| ch.id);
+        
+                                                finding
+                                            };
+        
+                                            if let Some(finding) = finding {
+                                                finding
+                                            } else {
+                                                let map = json!({
+                                                    "recipient_id": self.id.0,
+                                                });
+        
+                                                http::create_private_channel(&map)?.id
+                                            }
+                                        } else {
+                                            let map = json!({
+                                                "recipient_id": self.id.0,
+                                            });
+        
+                                            http::create_private_channel(&map)?.id
+                                        }};
 
         private_channel_id.send_message(f)
     }
@@ -742,7 +741,16 @@ impl UserId {
     ///
     /// **Note**: The current user must be a bot user.
     #[inline]
-    pub fn get(&self) -> Result<User> { http::get_user(self.0) }
+    pub fn get(&self) -> Result<User> {
+        #[cfg(feature = "cache")]
+        {
+            if let Some(user) = CACHE.read().unwrap().user(*self) {
+                return Ok(user.read().unwrap().clone());
+            }
+        }
+
+        http::get_user(self.0)
+    }
 }
 
 impl From<CurrentUser> for UserId {

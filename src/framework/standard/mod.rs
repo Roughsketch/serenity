@@ -25,6 +25,7 @@ use super::Framework;
 use model::{ChannelId, GuildId, Message, UserId};
 use model::permissions::Permissions;
 use tokio_core::reactor::Handle;
+use internal::RwLockExt;
 
 #[cfg(feature = "cache")]
 use client::CACHE;
@@ -395,17 +396,14 @@ impl StandardFramework {
     #[cfg(feature = "cache")]
     fn is_blocked_guild(&self, message: &Message) -> bool {
         if let Some(Channel::Guild(channel)) = CACHE.read().unwrap().channel(message.channel_id) {
-            let guild_id = channel.read().unwrap().guild_id;
+            let guild_id = channel.with(|g| g.guild_id);
             if self.configuration.blocked_guilds.contains(&guild_id) {
                 return true;
             }
 
             if let Some(guild) = guild_id.find() {
                 return self.configuration.blocked_users.contains(
-                    &guild
-                        .read()
-                        .unwrap()
-                        .owner_id,
+                    &guild.with(|g| g.owner_id),
                 );
             }
         }
@@ -417,10 +415,9 @@ impl StandardFramework {
     fn has_correct_permissions(&self, command: &Arc<Command>, message: &Message) -> bool {
         if !command.required_permissions.is_empty() {
             if let Some(guild) = message.guild() {
-                let perms = guild.read().unwrap().permissions_for(
-                    message.channel_id,
-                    message.author.id,
-                );
+                let perms = guild.with(|g| {
+                    g.permissions_for(message.channel_id, message.author.id)
+                });
 
                 return perms.contains(command.required_permissions);
             }
@@ -562,6 +559,7 @@ impl StandardFramework {
     /// #
     /// # fn main() {
     /// # use serenity::prelude::*;
+    /// # use serenity::framework::standard::Args;
     /// # struct Handler;
     /// #
     /// # impl EventHandler for Handler {}
@@ -577,8 +575,7 @@ impl StandardFramework {
     /// # }
     /// ```
     pub fn on<F, S>(mut self, command_name: S, f: F) -> Self
-        where F: Fn(&mut Context, &Message, Args) -> Result<(), String> + 'static,
-              S: Into<String> {
+        where F: Fn(&mut Context, &Message, Args) -> Result<(), String> + 'static, S: Into<String> {
         {
             let ungrouped = self.groups.entry("Ungrouped".to_owned()).or_insert_with(
                 || {
@@ -702,7 +699,8 @@ impl StandardFramework {
     /// #
     /// # impl EventHandler for Handler {}
     /// # let mut client = Client::new("token", Handler);
-    /// use serenity::framework::standard::DispatchError::{NotEnoughArguments, TooManyArguments};
+    /// use serenity::framework::standard::DispatchError::{NotEnoughArguments,
+    /// TooManyArguments};
     /// use serenity::framework::StandardFramework;
     ///
     /// client.with_framework(StandardFramework::new()
@@ -882,13 +880,14 @@ impl Framework for StandardFramework {
 
                         let mut args = {
                             let mut content = message.content[position..].trim();
-                            content = content[command_length..].trim(); 
-                        
-                            let delimiter = self.configuration.delimiters
+                            content = content[command_length..].trim();
+
+                            let delimiter = self.configuration
+                                .delimiters
                                 .iter()
                                 .find(|&d| content.contains(d))
                                 .map_or(" ", |s| s.as_str());
-                                
+
                             Args::new(&content, delimiter)
                         };
 
@@ -919,9 +918,7 @@ impl Framework for StandardFramework {
 
                                     Ok(())
                                 },
-                                CommandType::Basic(ref x) => {
-                                    (x)(&mut context, &message, args)
-                                },
+                                CommandType::Basic(ref x) => (x)(&mut context, &message, args),
                                 CommandType::WithCommands(ref x) => {
                                     (x)(&mut context, &message, groups, args)
                                 },

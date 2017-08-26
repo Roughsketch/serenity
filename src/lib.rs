@@ -85,7 +85,8 @@
 //! [examples]: https://github.com/zeyla/serenity/tree/master/examples
 //! [gateway docs]: gateway/index.html
 #![doc(html_root_url = "https://docs.rs/serenity/*")]
-#![allow(doc_markdown, inline_always, unknown_lints)]
+#![allow(unknown_lints)]
+#![allow(doc_markdown, inline_always)]
 #![warn(enum_glob_use, if_not_else)]
 
 #[macro_use]
@@ -104,11 +105,9 @@ extern crate lazy_static;
 extern crate base64;
 extern crate chrono;
 extern crate flate2;
-extern crate serde;
 extern crate parking_lot;
+extern crate serde;
 
-#[cfg(feature="framework")]
-extern crate vec_shift;
 #[cfg(feature = "voice")]
 extern crate byteorder;
 #[cfg(feature = "futures")]
@@ -129,6 +128,8 @@ extern crate sodiumoxide;
 extern crate tokio_core;
 #[cfg(feature = "client")]
 extern crate typemap;
+#[cfg(feature = "framework")]
+extern crate vec_shift;
 #[cfg(feature = "gateway")]
 extern crate websocket;
 

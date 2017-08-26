@@ -1,5 +1,6 @@
 use chrono::{DateTime, FixedOffset};
 use model::*;
+use internal::RwLockExt;
 
 #[cfg(feature = "model")]
 use std::borrow::Cow;
@@ -208,12 +209,12 @@ impl Group {
             Some(ref name) => Cow::Borrowed(name),
             None => {
                 let mut name = match self.recipients.values().nth(0) {
-                    Some(recipient) => recipient.read().unwrap().name.clone(),
+                    Some(recipient) => recipient.with(|c| c.name.clone()),
                     None => return Cow::Borrowed("Empty Group"),
                 };
 
                 for recipient in self.recipients.values().skip(1) {
-                    let _ = write!(name, ", {}", recipient.read().unwrap().name);
+                    let _ = write!(name, ", {}", recipient.with(|r| r.name.clone()));
                 }
 
                 Cow::Owned(name)
