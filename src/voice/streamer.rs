@@ -1,4 +1,4 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde_json;
 use std::ffi::OsStr;
 use std::io::{BufReader, ErrorKind as IoErrorKind, Read, Result as IoResult};
