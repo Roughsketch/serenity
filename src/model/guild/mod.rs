@@ -207,13 +207,7 @@ impl Guild {
     /// [`Guild::ban`]: struct.Guild.html#method.ban
     /// [`User`]: struct.User.html
     /// [Ban Members]: permissions/constant.BAN_MEMBERS.html
-    pub fn ban<U: Into<UserId>>(&self, user: U, delete_message_days: u8) -> Result<()> {
-        if delete_message_days > 7 {
-            return Err(Error::Model(
-                ModelError::DeleteMessageDaysAmount(delete_message_days),
-            ));
-        }
-
+    pub fn ban<U: Into<UserId>, BO: BanOptions>(&self, user: U, options: BO) -> Result<()> {
         #[cfg(feature = "cache")]
         {
             let req = permissions::BAN_MEMBERS;
@@ -223,7 +217,7 @@ impl Guild {
             }
         }
 
-        self.id.ban(user, delete_message_days)
+        self.id.ban(user, options)
     }
 
     /// Retrieves a list of [`Ban`]s for the guild.
@@ -604,22 +598,6 @@ impl Guild {
         where F: FnOnce(EditRole) -> EditRole, R: Into<RoleId> {
         self.id.edit_role(role_id, f)
     }
-
-    /// Gets an emoji in the guild by Id.
-    ///
-    /// Requires the [Manage Emojis] permission.
-    ///
-    /// [Manage Emojis]: permissions/constant.MANAGE_EMOJIS.html
-    #[inline]
-    pub fn emoji<E: Into<EmojiId>>(&self, emoji_id: E) -> Result<Emoji> { self.id.emoji(emoji_id) }
-
-    /// Gets a list of all of the guild's emojis.
-    ///
-    /// Requires the [Manage Emojis] permission.
-    ///
-    /// [Manage Emojis]: permissions/constant.MANAGE_EMOJIS.html
-    #[inline]
-    pub fn emojis(&self) -> Result<Vec<Emoji>> { self.id.emojis() }
 
     /// Gets a partial amount of guild data by its Id.
     ///

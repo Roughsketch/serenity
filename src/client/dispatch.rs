@@ -42,8 +42,8 @@ macro_rules! now {
     () => (Utc::now().time().second() * 1000)
 }
 
-fn context(conn: &Arc<Mutex<Shard>>, data: &Arc<Mutex<ShareMap>>) -> Context {
-    Context::new(conn.clone(), data.clone())
+fn context(conn: &Arc<Mutex<Shard>>, data: &Arc<Mutex<ShareMap>>, handle: &Handle) -> Context {
+    Context::new(conn.clone(), data.clone(), handle.clone())
 }
 
 #[cfg(feature = "standard_framework")]
@@ -65,7 +65,7 @@ pub fn dispatch<H: EventHandler + 'static>(event: Event,
                                            tokio_handle: &Handle) {
     match event {
         Event::MessageCreate(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
             dispatch_message(
                 context.clone(),
                 event.message.clone(),
@@ -95,7 +95,7 @@ pub fn dispatch<H: EventHandler + 'static>(event: Event,
                                            tokio_handle: &Handle) {
     match event {
         Event::MessageCreate(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
             dispatch_message(context, event.message, event_handler, tokio_handle);
         },
         other => handle_event(other, conn, data, event_handler, tokio_handle),
@@ -133,7 +133,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
     let wait_for_guilds = move || -> ::Result<()> {
         let unavailable_guilds = CACHE.read().unwrap().unavailable_guilds.len();
 
-        while unavailable_guilds != 0 && (now!() - last_guild_create_time < 2000) {
+        while unavailable_guilds != 0 && (now!() < last_guild_create_time + 2000) {
             thread::sleep(time::Duration::from_millis(500));
         }
 
@@ -144,7 +144,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::ChannelCreate(event) => {
             update!(update_with_channel_create, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             // This different channel_create dispacthing is only due to the fact that
             // each time the bot receives a dm, this event is also fired.
@@ -164,12 +164,18 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
                         Ok(())
                     });
                 },
+                Channel::Category(channel) => {
+                    tokio_handle.spawn_fn(move || {
+                        h.on_category_create(context, channel);
+                        Ok(())
+                    });
+                },
             }
         },
         Event::ChannelDelete(event) => {
             update!(update_with_channel_delete, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             match event.channel {
                 Channel::Private(_) |
@@ -181,10 +187,17 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
                         Ok(())
                     });
                 },
+                Channel::Category(channel) => {
+                    let h = event_handler.clone();
+                    tokio_handle.spawn_fn(move || {
+                        h.on_category_delete(context, channel);
+                        Ok(())
+                    });
+                },
             }
         },
         Event::ChannelPinsUpdate(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -195,7 +208,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::ChannelRecipientAdd(mut event) => {
             update!(update_with_channel_recipient_add, @event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -210,7 +223,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::ChannelRecipientRemove(event) => {
             update!(update_with_channel_recipient_remove, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -225,7 +238,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::ChannelUpdate(event) => {
             update!(update_with_channel_update, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {{
@@ -242,7 +255,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             }}
         },
         Event::GuildBanAdd(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -251,7 +264,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             });
         },
         Event::GuildBanRemove(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -278,7 +291,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
                 if cache.unavailable_guilds.is_empty() {
                     let h = event_handler.clone();
 
-                    let context = context(conn, data);
+                    let context = context(conn, data, tokio_handle);
 
                     let guild_amount = cache
                         .guilds
@@ -293,7 +306,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
                 }
             }
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {{
@@ -310,7 +323,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         },
         Event::GuildDelete(event) => {
             let _full = update!(update_with_guild_delete, event);
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {{
@@ -328,7 +341,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::GuildEmojisUpdate(event) => {
             update!(update_with_guild_emojis_update, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -341,7 +354,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             });
         },
         Event::GuildIntegrationsUpdate(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -352,7 +365,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::GuildMemberAdd(mut event) => {
             update!(update_with_guild_member_add, @event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -366,7 +379,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         },
         Event::GuildMemberRemove(event) => {
             let _member = update!(update_with_guild_member_remove, event);
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {{
@@ -383,7 +396,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         },
         Event::GuildMemberUpdate(event) => {
             let _before = update!(update_with_guild_member_update, event);
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {
@@ -412,7 +425,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::GuildMembersChunk(event) => {
             update!(update_with_guild_members_chunk, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -427,7 +440,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::GuildRoleCreate(event) => {
             update!(update_with_guild_role_create, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -437,7 +450,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         },
         Event::GuildRoleDelete(event) => {
             let _role = update!(update_with_guild_role_delete, event);
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {{
@@ -454,7 +467,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         },
         Event::GuildRoleUpdate(event) => {
             let _before = update!(update_with_guild_role_update, event);
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {{
@@ -472,7 +485,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::GuildUnavailable(event) => {
             update!(update_with_guild_unavailable, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -483,7 +496,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::GuildUpdate(event) => {
             update!(update_with_guild_update, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {
@@ -509,7 +522,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         // Already handled by the framework check macro
         Event::MessageCreate(_) => {},
         Event::MessageDeleteBulk(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -522,7 +535,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             });
         },
         Event::MessageDelete(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -535,7 +548,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             });
         },
         Event::MessageUpdate(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -546,7 +559,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::PresencesReplace(event) => {
             update!(update_with_presences_replace, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -557,7 +570,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::PresenceUpdate(mut event) => {
             update!(update_with_presence_update, @event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -567,7 +580,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         },
         Event::ReactionAdd(event) => {
             let h = event_handler.clone();
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
             tokio_handle.spawn_fn(move || {
                 h.on_reaction_add(context, event.reaction);
                 Ok(())
@@ -575,14 +588,14 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         },
         Event::ReactionRemove(event) => {
             let h = event_handler.clone();
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
             tokio_handle.spawn_fn(move || {
                 h.on_reaction_remove(context, event.reaction);
                 Ok(())
             });
         },
         Event::ReactionRemoveAll(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -603,7 +616,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
 
                     let _ = wait_for_guilds()
                     .map(|_| {
-                        let context = context(conn, data);
+                        let context = context(conn, data, tokio_handle);
 
                         let h = event_handler.clone();
                         tokio_handle.spawn_fn(move || {
@@ -612,7 +625,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
                         });
                     });
                 } else {
-                    let context = context(conn, data);
+                    let context = context(conn, data, tokio_handle);
 
                     let h = event_handler.clone();
                     tokio_handle.spawn_fn(move || {
@@ -623,7 +636,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             }
         },
         Event::Resumed(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -632,7 +645,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             });
         },
         Event::TypingStart(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -641,7 +654,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             });
         },
         Event::Unknown(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -651,7 +664,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         },
         Event::UserUpdate(event) => {
             let _before = update!(update_with_user_update, event);
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             feature_cache! {{
@@ -667,7 +680,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             }}
         },
         Event::VoiceServerUpdate(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -678,7 +691,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
         Event::VoiceStateUpdate(event) => {
             update!(update_with_voice_state_update, event);
 
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {
@@ -691,7 +704,7 @@ fn handle_event<H: EventHandler + 'static>(event: Event,
             });
         },
         Event::WebhookUpdate(event) => {
-            let context = context(conn, data);
+            let context = context(conn, data, tokio_handle);
 
             let h = event_handler.clone();
             tokio_handle.spawn_fn(move || {

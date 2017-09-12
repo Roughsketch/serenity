@@ -28,6 +28,9 @@ pub struct GuildChannel {
     ///
     /// **Note**: This is only available for voice channels.
     pub bitrate: Option<u64>,
+    /// Whether this guild channel belongs in a category.
+    #[serde(rename = "parent_id")]
+    pub category_id: Option<ChannelId>,
     /// The Id of the guild the channel is located in.
     ///
     /// If this matches with the [`id`], then this is the default text channel.
